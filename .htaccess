@@ -1,0 +1,58 @@
+# ============================================================
+# .htaccess — Apache URL Rewriting for StudyGuard PHP Backend
+# Place this file at: C:\xampp\htdocs\studyguard\.htaccess
+# ============================================================
+
+# Prevent directory browsing
+Options -Indexes
+
+# Enable URL rewriting
+RewriteEngine On
+
+# Set the base path (adjust if deployed to a subdirectory)
+RewriteBase /studyguard/
+
+# ── Handle CORS preflight (OPTIONS) requests globally ──────────
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ $1 [R=204,L]
+
+# ── API Route Rewrites ─────────────────────────────────────────
+
+# GET /api/status → api/status.php
+RewriteRule ^api/status$ api/status.php [L,QSA]
+
+# POST /api/session/register → api/session/register.php
+RewriteRule ^api/session/register$ api/session/register.php [L,QSA]
+
+# POST /api/session/snapshot → api/session/snapshot.php
+RewriteRule ^api/session/snapshot$ api/session/snapshot.php [L,QSA]
+
+# POST /api/session/complete → api/session/complete.php
+RewriteRule ^api/session/complete$ api/session/complete.php [L,QSA]
+
+# GET /api/sessions → api/sessions/index.php
+RewriteRule ^api/sessions$ api/sessions/index.php [L,QSA]
+
+# GET /api/sessions/<id>/snapshots → api/sessions/snapshots.php?session_id=<id>
+RewriteRule ^api/sessions/([0-9]+)/snapshots$ api/sessions/snapshots.php?session_id=$1 [L,QSA]
+
+# GET /api/sessions/snapshots?session_id=X → api/sessions/snapshots.php
+RewriteRule ^api/sessions/snapshots$ api/sessions/snapshots.php [L,QSA]
+
+# GET|POST /api/model/weights → api/model/weights.php
+RewriteRule ^api/model/weights$ api/model/weights.php [L,QSA]
+
+# GET /api/analytics/summary → api/analytics/summary.php
+RewriteRule ^api/analytics/summary$ api/analytics/summary.php [L,QSA]
+
+# GET /api/training-data → api/training-data.php
+RewriteRule ^api/training-data$ api/training-data.php [L,QSA]
+
+# ── Default charset ────────────────────────────────────────────
+AddDefaultCharset UTF-8
+
+# ── PHP settings (if allowed by host) ──────────────────────────
+<IfModule mod_php.c>
+    php_value display_errors 0
+    php_value log_errors 1
+</IfModule>

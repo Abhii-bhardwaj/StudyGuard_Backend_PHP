@@ -1,0 +1,217 @@
+# Phase 2 — ML Data Loop & Extension Integration: Complete
+
+## Summary
+Connected the Chrome Extension to the PHP/MySQL backend, added comprehensive debug logging across the entire pipeline, injected explicit `sessionId` into sync payloads, and implemented the full ML retraining loop in `train_model.py`.
+
+---
+
+## Changes Made
+
+### 1. Backend URL Switch (2 files)
+
+| File | Old Value | New Value |
+|------|-----------|-----------|
+| [background.js:23](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/extension/background.js#L20-L23) | `http://localhost:3001` | `http://localhost/studyguard` |
+| [dashboard.js:8](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/extension/dashboard/dashboard.js#L6-L8) | `http://localhost:3001` | `http://localhost/studyguard` |
+
+All **7 fetch() calls** across both files automatically switch because they all reference these constants.
+
+---
+
+### 2. Enhanced `syncToBackend()` — [background.js](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/extension/background.js#L293-L340)
+
+**Critical fix**: The old version spread `liveData` without a `sessionId`. PHP had to reverse-engineer the session ID from `timestamp - (sessionDuration * 60000)` which is inherently imprecise. Now `sessionId: state.startTime` is injected explicitly.
+
+**Debug logging**: Every sync cycle now logs what it's sending (sessionId, DLS, tier, feature count) and whether the POST succeeded or failed.
+
+---
+
+### 3. Enhanced `registerWithBackend()` — [background.js](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/extension/background.js#L274-L292)
+
+Added success/failure logging so you can trace session registration in the service worker console.
+
+---
+
+### 4. Enhanced `finalizeSessionToBackend()` — [background.js](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/extension/background.js#L654-L680)
+
+Added lifecycle logging. `endTime` now sent as ISO-8601 string (was epoch integer) for cleaner MySQL parsing.
+
+---
+
+### 5. Server-Side Debug Log — [snapshot.php](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/php-backend/api/session/snapshot.php#L21-L34)
+
+Every incoming snapshot is now logged to `php-backend/debug.log` with:
+- Timestamp, sessionId, DLS, tier
+- Whether `features` object is present
+- Feature key names (to catch camelCase vs snake_case issues)
+- Total payload key count
+
+---
+
+### 6. ML Retraining Loop — [train_model.py](file:///c:/Users/abhib/Downloads/distraction-extension-v4%20(1)/ml-training/train_model.py#L152-L235)
+
+New `load_real_data()` function that:
+1. Looks for `ml-training/real_training_data.json`
+2. Parses the PHP `/api/training-data` JSON format
+3. Extracts all 13 features in the exact ONNX feature order
+4. If ≥100 real samples: weighs them 3x and merges with synthetic data
+5. If <100 samples: appends without weighting
+6. If no file found: uses synthetic only (existing behavior)
+
+---
+
+## Data Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Ext as Chrome Extension<br/>(background.js)
+    participant PHP as PHP Backend<br/>(XAMPP)
+    participant DB as MySQL<br/>(studyguard)
+    participant ML as train_model.py
+
+    Note over Ext: Session starts
+    Ext->>PHP: POST /api/session/register<br/>{sessionId, startTime}
+    PHP->>DB: INSERT INTO sessions
+
+    loop Every 60 seconds (alarm)
+        Ext->>Ext: extractFeatures() → 13 features
+        Ext->>Ext: computeDLS() → ONNX inference
+        Ext->>PHP: POST /api/session/snapshot<br/>{sessionId, currentDLS, features{...13}}
+        PHP->>DB: INSERT INTO snapshots (13 cols)
+        PHP->>DB: UPSERT sessions (aggregates)
+        PHP-->>Ext: {ok: true}
+        Ext->>PHP: GET /api/model/weights
+        PHP-->>Ext: {weights: {...}}
+    end
+
+    Note over Ext: Session ends
+    Ext->>PHP: POST /api/session/complete<br/>{sessionId, endTime}
+    PHP->>DB: UPDATE sessions SET end_time
+
+    Note over ML: Retraining (manual)
+    ML->>PHP: GET /api/training-data
+    PHP->>DB: SELECT 13 features + dls + label
+    PHP-->>ML: {count, data: [...5000]}
+    ML->>ML: Merge real + synthetic data
+    ML->>ML: Train GradientBoosting
+    ML->>Ext: Save dls_model.onnx
+```
+
+---
+
+## Payload Structure Verification
+
+### What the extension sends (via `syncToBackend`):
+```json
+{
+    "sessionId": 1712640000000,
+    "currentDLS": 0.42,
+    "currentTier": 1,
+    "focusScore": 71,
+    "patienceIndex": 85,
+    "distractionPercentage": 22,
+    "longestStreak": 8,
+    "interventionCount": 1,
+    "sessionDuration": 12,
+    "timestamp": 1712640720000,
+    "features": {
+        "tabSwitchFreq": 0.40,
+        "tabSwitchSpeed": 0.25,
+        "burstSwitchCount": 0.00,
+        "idleDuration": 0.12,
+        "scrollIrregularity": 0.18,
+        "scrollJerk": 0.05,
+        "keystrokeVariance": 0.22,
+        "mouseVelocity": 0.15,
+        "domainRevisitFreq": 0.33,
+        "notifOpenSpeed": 0.00,
+        "timeOfDayWeight": 0.40,
+        "appSwitchFreq": 0.00,
+        "appSwitchDuration": 0.00
+    }
+}
+```
+
+### What snapshot.php maps:
+
+| JS Key (camelCase) | PHP Variable | DB Column |
+|-----|------|------|
+| `features.tabSwitchFreq` | `$tabSwitchFreq` | `tab_switch_freq` |
+| `features.tabSwitchSpeed` | `$tabSwitchSpeed` | `tab_switch_speed` |
+| `features.burstSwitchCount` | `$burstSwitchCount` | `burst_switch_count` |
+| `features.idleDuration` | `$idleDuration` | `idle_duration` |
+| `features.scrollIrregularity` | `$scrollIrregularity` | `scroll_irregularity` |
+| `features.scrollJerk` | `$scrollJerk` | `scroll_jerk` |
+| `features.keystrokeVariance` | `$keystrokeVariance` | `keystroke_variance` |
+| `features.mouseVelocity` | `$mouseVelocity` | `mouse_velocity` |
+| `features.domainRevisitFreq` | `$domainRevisitFreq` | `domain_revisit_freq` |
+| `features.notifOpenSpeed` | `$notifOpenSpeed` | `notif_open_speed` |
+| `features.timeOfDayWeight` | `$timeOfDayWeight` | `time_of_day_weight` |
+| `features.appSwitchFreq` | `$appSwitchFreq` | `app_switch_freq` |
+| `features.appSwitchDuration` | `$appSwitchDuration` | `app_switch_duration` |
+
+All 13 features ✅ — fully mapped with camelCase → snake_case fallback
+
+---
+
+## Testing Checklist
+
+### Step 1: Verify PHP Backend
+- [ ] Open: `http://localhost/studyguard/api/status` → should return JSON
+- [ ] Open: `http://localhost/studyguard/api/model/weights` → should return weights
+
+### Step 2: Reload Extension
+- [ ] Go to `chrome://extensions`
+- [ ] Toggle the extension off → on (or click reload ↺)
+
+### Step 3: Start Session
+- [ ] Click extension icon → start a study session
+- [ ] Open Chrome DevTools → service worker console
+
+### Step 4: Verify Console Logs
+After 60 seconds, you should see:
+```
+[Register] Registering session 1712640000000 with PHP backend
+[Register] Session 1712640000000 registered ✓
+[Sync] Sending snapshot to PHP backend: {sessionId: ..., dls: "0.123", tier: 0, featureKeys: 13}
+[Sync] Snapshot saved to MySQL ✓
+```
+
+### Step 5: Verify MySQL
+- [ ] Open phpMyAdmin → `studyguard` → `sessions` table → row exists
+- [ ] Open `snapshots` table → rows appear (one per 60s)
+- [ ] Check ALL 13 feature columns are populated (not all 0)
+
+### Step 6: Verify Debug Log
+- [ ] Open `C:\xampp\htdocs\studyguard\debug.log`
+- [ ] Each line shows the incoming payload metadata
+
+### Step 7: End Session & Check Complete
+- [ ] End the session in the extension
+- [ ] Console shows: `[Finalize] Session ... completed ✓`
+- [ ] phpMyAdmin → sessions → `end_time` is now populated
+
+### Step 8: Dashboard
+- [ ] Open the extension dashboard
+- [ ] Backend badge should show "✅ Backend: Online"
+- [ ] DB Sessions and Snapshots counts should be non-zero
+
+### Step 9: ML Retraining Loop
+```bash
+# 1. Export real data from PHP
+curl http://localhost/studyguard/api/training-data > ml-training/real_training_data.json
+
+# 2. Run trainer (will auto-detect and merge the real data)
+cd ml-training
+python train_model.py
+
+# 3. Reload extension to use the new model
+```
+
+---
+
+## What Was Tested
+- All 7 `fetch()` call sites verified to use new URL
+- Zero occurrences of `localhost:3001` remain (only in comments)
+- Payload structure (liveData → snapshot.php) verified: all 13 features mapped correctly
+- Training script tested for both real-data and synthetic-only paths
