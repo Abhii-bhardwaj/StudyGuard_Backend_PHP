@@ -57,7 +57,7 @@ function get_db(): mysqli
         
         // If the host is not localhost, it's a cloud DB (like Aiven) which requires SSL
         $is_localhost = ($host === 'localhost' || $host === '127.0.0.1');
-        $flags = $is_localhost ? 0 : MYSQLI_CLIENT_SSL;
+        $flags = $is_localhost ? 0 : MYSQLI_CLIENT_SSL | MYSQLI_CLIENT_SSL_DONT_VERIFY_SERVER_CERT;
 
         // Establish connection
         mysqli_real_connect($conn, $host, $user, $pass, $dbname, $port, null, $flags);
