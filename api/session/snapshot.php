@@ -31,7 +31,7 @@ $logEntry = [
     'featureKeys'=> isset($body['features']) ? array_keys($body['features']) : [],
     'totalKeys'  => count($body),
 ];
-file_put_contents($logFile, json_encode($logEntry) . PHP_EOL, FILE_APPEND);
+// file_put_contents($logFile, json_encode($logEntry) . PHP_EOL, FILE_APPEND);
 
 // ── Strict Validation ─────────────────────────────────────────
 if (!isset($body['currentDLS']) && !isset($body['dls'])) {
